@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using BepInEx;
 using BepInEx.Configuration;
@@ -12,7 +12,7 @@ using UnityEngine.UI;
 
 namespace ItemPicker
 {
-    [BepInPlugin("qol.itempicker", "Item Picker", "1.0.0")]
+    [BepInPlugin("qol.itempicker", "Item Picker", "1.0.4")]
     public class ItemPickerPlugin : BaseUnityPlugin
     {
         internal static ItemPickerPlugin Instance;
