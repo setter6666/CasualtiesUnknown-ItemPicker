@@ -7,7 +7,8 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if (-not $Source) {
-    $Source = Join-Path $PSScriptRoot 'src\ItemPicker.cs'
+    $base = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+    $Source = Join-Path $base 'src\ItemPicker.cs'
 }
 if (-not (Test-Path $Source)) { throw "source not found: $Source" }
 
@@ -37,7 +38,11 @@ $refs += (Join-Path $core '0Harmony.dll')
 $missing = $refs | Where-Object { -not (Test-Path $_) }
 if ($missing) { throw ("missing references: " + ($missing -join ', ')) }
 
-$outPath = [IO.Path]::GetFullPath((Join-Path (Get-Location) $Out))
+if ([IO.Path]::IsPathRooted($Out)) {
+    $outPath = [IO.Path]::GetFullPath($Out)
+} else {
+    $outPath = [IO.Path]::GetFullPath((Join-Path (Get-Location).Path $Out))
+}
 $outDir = Split-Path -Parent $outPath
 if ($outDir -and -not (Test-Path $outDir)) { New-Item -ItemType Directory -Force -Path $outDir | Out-Null }
 

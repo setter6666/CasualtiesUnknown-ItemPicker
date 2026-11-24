@@ -74,26 +74,20 @@ MIT，见 [LICENSE](LICENSE)。与游戏开发商及 QoL: Unknown 的作者均�
 ## 发布流程 / Release workflow
 
 编译必须在有游戏本体的机器上做（要引用游戏自带的 `Assembly-CSharp.dll`、`UnityEngine.*`、`Unity.TextMeshPro`
-这些**不能公开分发**的程序集），所以流程是：
+这些**不能公开分发**的程序集），所以流程是「本地编译 + CI 打包发布」：
 
 ```powershell
-# 1) 本地编译（引用真实游戏程序集，最可靠）
-./build.ps1 -GameDir "…\Casualties Unknown" -Out ".\dist\ItemPicker.dll"
-
-# 2) 更新说明后提交
-git add dist/ItemPicker.dll 说明.txt
-git commit -m "build: ItemPicker 1.0.x"
-git push
-
-# 3) 打 tag，CI 自动打包 + 发 Release
-git tag v1.0.3
-git push origin v1.0.3
+$env:GH_TOKEN = 'github_pat_...'      # Contents: R/W（+ 首次改 workflow 需要 Workflows: R/W）
+./release.ps1 -Version 1.0.4 -Notes "修复 xxx"
 ```
 
-`.github/workflows/release.yml` 会在 tag 推送后：
+`release.ps1` 会：改版本号（插件 + 说明）→ 本地编译 `dist/ItemPicker.dll` → 通过 API 提交到 `main`
+→ 创建 tag `v1.0.4`。tag 推上去后 `.github/workflows/release.yml` 自动：
 
-1. 校验 `src/ItemPicker.cs`、`dist/ItemPicker.dll`、`说明.txt` 是否存在
+1. 校验 `src/ItemPicker.cs`、`dist/ItemPicker.dll`、`说明.txt`
 2. 打成 `ItemPicker-<tag>.zip`（内含 `BepInEx/plugins/ItemPicker.dll` + 说明）
-3. 创建/更新对应 tag 的 GitHub Release 并上传 zip，附自动生成的 release notes
+3. 创建/更新对应 tag 的 GitHub Release 并上传 zip
 
-也可以在 Actions 页面手动 `Run workflow` 并填入已存在的 tag。
+只想本地构建、不发布：`./release.ps1 -Version 1.0.4 -NoPush`
+
+手打 tag 也一样能触发：`git tag v1.0.4 && git push origin v1.0.4`。
