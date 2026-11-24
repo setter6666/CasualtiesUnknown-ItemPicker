@@ -60,6 +60,18 @@ AutoOpenSeconds = 0
 > 注意：`UnityEngine.CoreModule.dll` 等是 netstandard 2.1 目标，编译时必须额外引用游戏
 > `CasualtiesUnknown_Data\Managed\netstandard.dll`，否则会报 CS0012。脚本里已处理。
 
+## 病毒检测 / VirusTotal
+
+[![VirusTotal](https://img.shields.io/badge/VirusTotal-0%20%2F%2066%20detections-brightgreen)](https://www.virustotal.com/gui/file/71d07017e7868a5cdb230bf5c8d976059f7e8a8637b74cfc51fae12217c6627b)
+
+发布包 `ItemPicker-v1.0.4.zip` 已上传 VirusTotal：**66 个引擎，0 个检出恶意 / 0 个可疑**。
+
+- 报告：https://www.virustotal.com/gui/file/71d07017e7868a5cdb230bf5c8d976059f7e8a8637b74cfc51fae12217c6627b
+- SHA256：`71D07017E7868A5CDB230BF5C8D976059F7E8A8637B74CFC51FAE12217C6627B`
+
+> BepInEx 插件本质是往游戏进程里注入 .NET 代码，个别启发式引擎可能因「注入/加载器」行为给出误报；
+> 如果你遇到这种情况，可以用上面的 SHA256 在 VirusTotal 上复核，或直接对照 `src/ItemPicker.cs` 自编译。
+
 ## 已知限制 / Known limitations
 
 - 多人游戏：只在本地生成，主机与其他玩家看不到。
