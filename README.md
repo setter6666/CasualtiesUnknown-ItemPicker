@@ -103,3 +103,6 @@ $env:GH_TOKEN = 'github_pat_...'      # Contents: R/W（+ 首次改 workflow 需
 只想本地构建、不发布：`./release.ps1 -Version 1.0.4 -NoPush`
 
 手打 tag 也一样能触发：`git tag v1.0.4 && git push origin v1.0.4`。
+
+> 仅对本仓库 Release 页发布的版本提供支持；第三方整合包/修改版的问题请找其发布者。
+> 官方版本可通过 Release 说明里的 SHA256 校验。
