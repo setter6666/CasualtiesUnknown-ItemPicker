@@ -70,3 +70,30 @@ AutoOpenSeconds = 0
 
 MIT，见 [LICENSE](LICENSE)。与游戏开发商及 QoL: Unknown 的作者均无隶属关系。
 物品名称与图标归游戏版权方所有。
+
+## 发布流程 / Release workflow
+
+编译必须在有游戏本体的机器上做（要引用游戏自带的 `Assembly-CSharp.dll`、`UnityEngine.*`、`Unity.TextMeshPro`
+这些**不能公开分发**的程序集），所以流程是：
+
+```powershell
+# 1) 本地编译（引用真实游戏程序集，最可靠）
+./build.ps1 -GameDir "…\Casualties Unknown" -Out ".\dist\ItemPicker.dll"
+
+# 2) 更新说明后提交
+git add dist/ItemPicker.dll 说明.txt
+git commit -m "build: ItemPicker 1.0.x"
+git push
+
+# 3) 打 tag，CI 自动打包 + 发 Release
+git tag v1.0.3
+git push origin v1.0.3
+```
+
+`.github/workflows/release.yml` 会在 tag 推送后：
+
+1. 校验 `src/ItemPicker.cs`、`dist/ItemPicker.dll`、`说明.txt` 是否存在
+2. 打成 `ItemPicker-<tag>.zip`（内含 `BepInEx/plugins/ItemPicker.dll` + 说明）
+3. 创建/更新对应 tag 的 GitHub Release 并上传 zip，附自动生成的 release notes
+
+也可以在 Actions 页面手动 `Run workflow` 并填入已存在的 tag。

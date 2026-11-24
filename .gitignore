@@ -1,9 +1,15 @@
-# build output
-ItemPicker.dll
-*.pdb
-*.mdb
+# local build output
+/*.dll
+/*.pdb
+/*.mdb
+build/
+staging/
+*.zip
 
-# local
+# keep the release binary that the CI packages
+!dist/ItemPicker.dll
+
+# editors
 .vs/
 .vscode/
 obj/
