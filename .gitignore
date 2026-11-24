@@ -1,0 +1,10 @@
+# build output
+ItemPicker.dll
+*.pdb
+*.mdb
+
+# local
+.vs/
+.vscode/
+obj/
+bin/
