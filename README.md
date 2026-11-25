@@ -64,12 +64,12 @@ AutoOpenSeconds = 0
 
 ## 病毒检测 / VirusTotal
 
-[![VirusTotal](https://img.shields.io/badge/VirusTotal-0%20%2F%2066%20detections-brightgreen)](https://www.virustotal.com/gui/file/71d07017e7868a5cdb230bf5c8d976059f7e8a8637b74cfc51fae12217c6627b)
+[![VirusTotal](https://img.shields.io/badge/VirusTotal-0%20%2F%2067%20detections-brightgreen)](https://www.virustotal.com/gui/file/8857d043122ab9118a3bbb59fadc237840340ffd93355e211b79c0abacf65ec7)
 
-发布包 `ItemPicker-v1.0.4.zip` 已上传 VirusTotal：**66 个引擎，0 个检出恶意 / 0 个可疑**。
+发布包 `ItemPicker-v1.2.0.zip` 已上传 VirusTotal：**67 个引擎，0 个检出恶意 / 0 个可疑**。
 
-- 报告：https://www.virustotal.com/gui/file/71d07017e7868a5cdb230bf5c8d976059f7e8a8637b74cfc51fae12217c6627b
-- SHA256：`71D07017E7868A5CDB230BF5C8D976059F7E8A8637B74CFC51FAE12217C6627B`
+- 报告：https://www.virustotal.com/gui/file/8857d043122ab9118a3bbb59fadc237840340ffd93355e211b79c0abacf65ec7
+- SHA256（zip）：`8857D043122AB9118A3BBB59FADC237840340FFD93355E211B79C0ABACF65EC7`
 
 > BepInEx 插件本质是往游戏进程里注入 .NET 代码，个别启发式引擎可能因「注入/加载器」行为给出误报；
 > 如果你遇到这种情况，可以用上面的 SHA256 在 VirusTotal 上复核，或直接对照 `src/ItemPicker.cs` 自编译。
