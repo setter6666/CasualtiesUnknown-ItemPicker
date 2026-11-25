@@ -1,14 +1,18 @@
 param(
     [Parameter(Mandatory = $true)][string]$GameDir,
     [string]$Out = '.\ItemPicker.dll',
-    [string]$Source
+    [string]$Source,
+    [string]$PinyinData
 )
 
 $ErrorActionPreference = 'Stop'
 
+$base = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 if (-not $Source) {
-    $base = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
     $Source = Join-Path $base 'src\ItemPicker.cs'
+}
+if (-not $PinyinData) {
+    $PinyinData = Join-Path $base 'assets\pinyin.bin'
 }
 if (-not (Test-Path $Source)) { throw "source not found: $Source" }
 
@@ -48,6 +52,11 @@ if ($outDir -and -not (Test-Path $outDir)) { New-Item -ItemType Directory -Force
 
 $cscArgs = @('/nologo', '/target:library', '/optimize+', "/out:$outPath")
 foreach ($r in $refs) { $cscArgs += "/r:$r" }
+if (Test-Path $PinyinData) {
+    $cscArgs += "/resource:$PinyinData,ItemPicker.pinyin.bin"
+} else {
+    Write-Warning "拼音数据缺失：$PinyinData（拼音搜索将不可用）"
+}
 $cscArgs += $Source
 
 & $csc @cscArgs

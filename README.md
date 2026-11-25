@@ -9,10 +9,12 @@
 
 ## 功能 / Features
 
-- 图标网格列出全部可生成物品（当前游戏版本 301 项），带分类标签页
+- 图标网格列出全部可生成物品（原版 301 项），带分类标签页
+- **支持 CUCoreLib mod 物品**：自动读取 mod 注册的物品、图标与说明，新增「mod物品」分类
+- 点「mod物品」后才会出现第二行「来源」，可再按具体 mod 过滤（如 Realistic Cardiac / Respiration / Neurology）
 - 鼠标悬停显示名称、完整说明与物品大图（自绘提示框，跟随鼠标）
 - 左键生成 1 个；`Shift`+左键生成 10 个；`Ctrl`+左键生成 100 个
-- 直接打字按中文名或英文 ID 筛选
+- 直接打字筛选：中文名 / 拼音全拼（`xindiantu`）/ 拼音首字母（`xdt`）/ 英文 ID
 - 菜单打开时临时屏蔽角色操作，关闭后恢复
 - 生成位置为角色脚下，2 格内自动拾取（背包满则掉在地上）
 - 成就安全：物品直接实例化，不经过 `ConsoleScript.CheckForCheats`
@@ -76,6 +78,7 @@ AutoOpenSeconds = 0
 
 - 多人游戏：只在本地生成，主机与其他玩家看不到。
 - 只包含带 `Item` 组件的预制体；建筑 / 实体不在列表内。
+- mod 物品需要装 **CUCoreLib**（以及对应 mod）；没有 CUCoreLib 时只显示原版物品。
 - 游戏更新后若物品预制体改动，列表会自动跟随（运行时遍历 `Resources`），一般无需重新编译。
 
 ## 许可 / License
@@ -103,6 +106,3 @@ $env:GH_TOKEN = 'github_pat_...'      # Contents: R/W（+ 首次改 workflow 需
 只想本地构建、不发布：`./release.ps1 -Version 1.0.4 -NoPush`
 
 手打 tag 也一样能触发：`git tag v1.0.4 && git push origin v1.0.4`。
-
-> 仅对本仓库 Release 页发布的版本提供支持；第三方整合包/修改版的问题请找其发布者。
-> 官方版本可通过 Release 说明里的 SHA256 校验。

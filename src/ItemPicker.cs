@@ -1,5 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
+using System.IO.Compression;
+using System.Reflection;
+using System.Text;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
@@ -12,7 +16,7 @@ using UnityEngine.UI;
 
 namespace ItemPicker
 {
-    [BepInPlugin("qol.itempicker", "Item Picker", "1.0.4")]
+    [BepInPlugin("qol.itempicker", "Item Picker", "1.2.0")]
     public class ItemPickerPlugin : BaseUnityPlugin
     {
         internal static ItemPickerPlugin Instance;
@@ -110,6 +114,10 @@ namespace ItemPicker
         public string Desc;
         public string Category;
         public Sprite Icon;
+        public bool IsMod;
+        public string OwnerGuid;
+        public string Pinyin;
+        public string Initials;
     }
 
     internal sealed class CellClick : MonoBehaviour, IPointerClickHandler
@@ -150,6 +158,349 @@ namespace ItemPicker
         }
     }
 
+    // 拼音索引：内嵌压缩字典（U+4E00~U+9FFF 常用字），用于拼音/首字母搜索
+    internal static class PinyinIndex
+    {
+        private static Dictionary<char, string> map;
+
+        public static bool EnsureLoaded()
+        {
+            if (map != null)
+            {
+                return map.Count > 0;
+            }
+            Dictionary<char, string> dict = new Dictionary<char, string>();
+            try
+            {
+                Stream stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("ItemPicker.pinyin.bin");
+                if (stream != null)
+                {
+                    using (stream)
+                    using (DeflateStream ds = new DeflateStream(stream, CompressionMode.Decompress))
+                    using (StreamReader reader = new StreamReader(ds, Encoding.UTF8))
+                    {
+                        string line;
+                        while ((line = reader.ReadLine()) != null)
+                        {
+                            if (line.Length < 2)
+                            {
+                                continue;
+                            }
+                            char ch = line[0];
+                            string py = line.Substring(1).Trim();
+                            if (py.Length > 0)
+                            {
+                                dict[ch] = py;
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                ItemPickerPlugin.Log.LogWarning("拼音索引加载失败：" + ex.Message);
+            }
+            map = dict;
+            if (dict.Count > 0)
+            {
+                ItemPickerPlugin.Log.LogInfo("拼音索引已加载：" + dict.Count + " 个汉字。");
+            }
+            return dict.Count > 0;
+        }
+
+        public static string GetPinyin(string text)
+        {
+            if (string.IsNullOrEmpty(text) || map == null)
+            {
+                return "";
+            }
+            StringBuilder sb = new StringBuilder(text.Length * 4);
+            for (int i = 0; i < text.Length; i++)
+            {
+                char c = text[i];
+                string py;
+                if (map.TryGetValue(c, out py))
+                {
+                    sb.Append(py);
+                }
+                else if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
+                {
+                    sb.Append(c);
+                }
+                else if (c >= 'A' && c <= 'Z')
+                {
+                    sb.Append((char)(c + 32));
+                }
+            }
+            return sb.ToString();
+        }
+
+        public static string GetInitials(string text)
+        {
+            if (string.IsNullOrEmpty(text) || map == null)
+            {
+                return "";
+            }
+            StringBuilder sb = new StringBuilder(text.Length);
+            for (int i = 0; i < text.Length; i++)
+            {
+                char c = text[i];
+                string py;
+                if (map.TryGetValue(c, out py) && py.Length > 0)
+                {
+                    sb.Append(py[0]);
+                }
+                else if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))
+                {
+                    sb.Append(char.ToLowerInvariant(c));
+                }
+            }
+            return sb.ToString();
+        }
+    }
+
+    // 与 CUCoreLib 的桥接：反射读取注册进来的 mod 物品（这些物品不在 Resources 里，
+    // 必须用 CUCoreLib.CustomInstantiate 生成）
+    internal static class CuCoreBridge
+    {
+        private static bool initialized;
+        private static bool available;
+        private static Type itemRegistryType;
+        private static Type customInstantiateType;
+        private static MethodInfo getIdsMethod;
+        private static MethodInfo tryGetIconMethod;
+        private static MethodInfo tryGetInfoMethod;
+        private static MethodInfo tryGetOwnerMethod;
+        private static MethodInfo instantiateMethod;
+
+        private static Type FindTypeByName(string simpleName)
+        {
+            Assembly[] asms = AppDomain.CurrentDomain.GetAssemblies();
+            for (int i = 0; i < asms.Length; i++)
+            {
+                Type[] types;
+                try
+                {
+                    types = asms[i].GetTypes();
+                }
+                catch (ReflectionTypeLoadException ex)
+                {
+                    types = ex.Types;
+                }
+                catch
+                {
+                    continue;
+                }
+                if (types == null)
+                {
+                    continue;
+                }
+                for (int j = 0; j < types.Length; j++)
+                {
+                    Type t = types[j];
+                    if (t != null && t.Name == simpleName && t.Namespace != null && t.Namespace.StartsWith("CUCoreLib", StringComparison.Ordinal))
+                    {
+                        return t;
+                    }
+                }
+            }
+            return null;
+        }
+
+        public static bool Available
+        {
+            get { Init(); return available; }
+        }
+
+        public static bool CanSpawn
+        {
+            get { Init(); return instantiateMethod != null; }
+        }
+
+        private static void Init()
+        {
+            if (initialized)
+            {
+                return;
+            }
+            initialized = true;
+            try
+            {
+                itemRegistryType = FindTypeByName("ItemRegistry");
+                customInstantiateType = FindTypeByName("CustomInstantiate");
+                if (itemRegistryType != null)
+                {
+                    getIdsMethod = itemRegistryType.GetMethod("GetRegisteredItemIds", Type.EmptyTypes);
+                    tryGetIconMethod = itemRegistryType.GetMethod("TryGetIcon", new Type[] { typeof(string), typeof(Sprite).MakeByRefType() });
+                    tryGetInfoMethod = itemRegistryType.GetMethod("TryGetItemInfo", new Type[] { typeof(string), typeof(ItemInfo).MakeByRefType() });
+                    tryGetOwnerMethod = itemRegistryType.GetMethod("TryGetOwnerModGuid", new Type[] { typeof(string), typeof(string).MakeByRefType() });
+                }
+                if (customInstantiateType != null)
+                {
+                    instantiateMethod = customInstantiateType.GetMethod("InstantiateReturn");
+                }
+                if (instantiateMethod == null)
+                {
+                    ItemPickerPlugin.Log.LogWarning("找到了 CUCoreLib，但没找到 CustomInstantiate.InstantiateReturn，mod 物品只能列出不能生成。");
+                }
+                available = itemRegistryType != null && getIdsMethod != null;
+                if (available)
+                {
+                    ItemPickerPlugin.Log.LogInfo("检测到 CUCoreLib，已启用 mod 物品支持。");
+                }
+            }
+            catch (Exception ex)
+            {
+                ItemPickerPlugin.Log.LogWarning("CUCoreLib 兼容初始化失败：" + ex.Message);
+            }
+        }
+
+        public static List<string> GetItemIds()
+        {
+            Init();
+            List<string> result = new List<string>();
+            if (getIdsMethod == null)
+            {
+                return result;
+            }
+            try
+            {
+                IEnumerable<string> ids = getIdsMethod.Invoke(null, null) as IEnumerable<string>;
+                if (ids != null)
+                {
+                    foreach (string id in ids)
+                    {
+                        if (!string.IsNullOrEmpty(id))
+                        {
+                            result.Add(id);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                ItemPickerPlugin.Log.LogWarning("读取 CUCoreLib 物品列表失败：" + ex.Message);
+            }
+            return result;
+        }
+
+        public static Sprite GetIcon(string id)
+        {
+            Init();
+            if (tryGetIconMethod == null)
+            {
+                return null;
+            }
+            try
+            {
+                object[] args = new object[] { id, null };
+                object ok = tryGetIconMethod.Invoke(null, args);
+                if (ok is bool && (bool)ok)
+                {
+                    return args[1] as Sprite;
+                }
+            }
+            catch
+            {
+            }
+            return null;
+        }
+
+        public static bool TryGetInfo(string id, out string name, out string desc, out string category)
+        {
+            name = null;
+            desc = null;
+            category = null;
+            Init();
+            if (tryGetInfoMethod == null)
+            {
+                return false;
+            }
+            try
+            {
+                object[] args = new object[] { id, null };
+                object ok = tryGetInfoMethod.Invoke(null, args);
+                if (ok is bool && (bool)ok)
+                {
+                    ItemInfo info = args[1] as ItemInfo;
+                    if (info != null)
+                    {
+                        name = info.fullName;
+                        desc = info.description;
+                        category = info.category;
+                        return true;
+                    }
+                }
+            }
+            catch
+            {
+            }
+            return false;
+        }
+
+        public static string GetOwner(string id)
+        {
+            Init();
+            if (tryGetOwnerMethod == null)
+            {
+                return "";
+            }
+            try
+            {
+                object[] args = new object[] { id, null };
+                object ok = tryGetOwnerMethod.Invoke(null, args);
+                if (ok is bool && (bool)ok)
+                {
+                    return args[1] as string;
+                }
+            }
+            catch
+            {
+            }
+            return "";
+        }
+
+        public static GameObject Spawn(string id, Vector3 position)
+        {
+            Init();
+            if (instantiateMethod == null)
+            {
+                return null;
+            }
+            try
+            {
+                object[] args = new object[] { id, position, Quaternion.identity, 1f };
+                return instantiateMethod.Invoke(null, args) as GameObject;
+            }
+            catch (Exception ex)
+            {
+                ItemPickerPlugin.Log.LogWarning("生成 mod 物品失败（" + id + "）：" + ex.Message);
+                return null;
+            }
+        }
+
+        public static string OwnerDisplayName(string guid)
+        {
+            if (string.IsNullOrEmpty(guid))
+            {
+                return "";
+            }
+            try
+            {
+                PluginInfo info;
+                if (BepInEx.Bootstrap.Chainloader.PluginInfos.TryGetValue(guid, out info) && info != null &&
+                    info.Metadata != null && !string.IsNullOrEmpty(info.Metadata.Name))
+                {
+                    return info.Metadata.Name;
+                }
+            }
+            catch
+            {
+            }
+            return guid;
+        }
+    }
+
     internal static class PickerUI
     {
         public static bool IsOpen;
@@ -160,11 +511,16 @@ namespace ItemPicker
         private static TextMeshProUGUI filterText;
         private static TextMeshProUGUI statusText;
         private static RectTransform categoryBar;
+        private static RectTransform modBar;
+        private static RectTransform scrollArea;
 
         private static readonly List<ItemEntry> allEntries = new List<ItemEntry>();
         private static readonly List<string> categories = new List<string>();
+        private static readonly List<string> modOwners = new List<string>();
+        private static int modItemCount;
         private static bool itemsLoaded;
         private static string currentCategory = "";
+        private static string currentOwner = "";
         private static string filter = "";
         private static string pendingFilter = "";
         private static float rebuildAt = -1f;
@@ -182,7 +538,16 @@ namespace ItemPicker
                 return;
             }
             tooltipName.text = e.Name;
-            tooltipDesc.text = string.IsNullOrEmpty(e.Desc) ? "" : e.Desc;
+            string body = string.IsNullOrEmpty(e.Desc) ? "" : e.Desc;
+            if (e.IsMod)
+            {
+                string owner = CuCoreBridge.OwnerDisplayName(e.OwnerGuid);
+                if (!string.IsNullOrEmpty(owner))
+                {
+                    body = "<color=#8fd3ff>来源：" + owner + "</color>\n" + body;
+                }
+            }
+            tooltipDesc.text = body;
             if (tooltipIcon != null)
             {
                 tooltipIcon.sprite = e.Icon;
@@ -269,6 +634,8 @@ namespace ItemPicker
             root.SetActive(true);
             IsOpen = true;
             RebuildGrid();
+
+
         }
 
         public static void Close()
@@ -417,10 +784,66 @@ namespace ItemPicker
                     allEntries.Add(entry);
                 }
 
+                // ---- CUCoreLib 注册的 mod 物品（不在 Resources 里，必须用 CUCoreLib 实例化）----
+                if (CuCoreBridge.Available)
+                {
+                    List<string> modIds = CuCoreBridge.GetItemIds();
+                    for (int i = 0; i < modIds.Count; i++)
+                    {
+                        string id = modIds[i];
+                        if (seen.Contains(id))
+                        {
+                            continue;
+                        }
+                        ItemEntry entry = new ItemEntry();
+                        entry.Id = id;
+                        entry.IsMod = true;
+                        string modName;
+                        string modDesc;
+                        string modCategory;
+                        if (CuCoreBridge.TryGetInfo(id, out modName, out modDesc, out modCategory))
+                        {
+                            entry.Name = string.IsNullOrEmpty(modName) ? Locale.GetItem(id) : modName;
+                            entry.Desc = modDesc;
+                            entry.Category = modCategory;
+                        }
+                        else
+                        {
+                            entry.Name = Locale.GetItem(id);
+                            entry.Desc = Locale.GetItem(id + "dsc");
+                            entry.Category = "";
+                        }
+                        if (string.IsNullOrEmpty(entry.Name))
+                        {
+                            entry.Name = id;
+                        }
+                        entry.Icon = CuCoreBridge.GetIcon(id);
+                        entry.OwnerGuid = CuCoreBridge.GetOwner(id);
+                        if (!string.IsNullOrEmpty(entry.OwnerGuid) && !modOwners.Contains(entry.OwnerGuid))
+                        {
+                            modOwners.Add(entry.OwnerGuid);
+                        }
+                        seen.Add(id);
+                        allEntries.Add(entry);
+                        modItemCount++;
+                    }
+                    ItemPickerPlugin.Log.LogInfo("CUCoreLib mod 物品：" + modItemCount + " 个，来自 " + modOwners.Count + " 个 mod。");
+                }
+
                 allEntries.Sort(delegate (ItemEntry a, ItemEntry b)
                 {
                     return string.Compare(a.Name, b.Name, StringComparison.CurrentCulture);
                 });
+
+                if (PinyinIndex.EnsureLoaded())
+                {
+                    for (int i = 0; i < allEntries.Count; i++)
+                    {
+                        allEntries[i].Pinyin = PinyinIndex.GetPinyin(allEntries[i].Name);
+                        allEntries[i].Initials = PinyinIndex.GetInitials(allEntries[i].Name);
+                    }
+
+                }
 
                 HashSet<string> cats = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 for (int i = 0; i < allEntries.Count; i++)
@@ -432,6 +855,10 @@ namespace ItemPicker
                 }
                 categories.AddRange(cats);
                 categories.Sort(StringComparer.OrdinalIgnoreCase);
+                modOwners.Sort(delegate (string a, string b)
+                {
+                    return string.Compare(CuCoreBridge.OwnerDisplayName(a), CuCoreBridge.OwnerDisplayName(b), StringComparison.CurrentCulture);
+                });
 
                 ItemPickerPlugin.Log.LogInfo("物品列表加载完成：" + allEntries.Count + " 个可生成物品。");
             }
@@ -538,7 +965,7 @@ namespace ItemPicker
                 title.color = new Color(1f, 0.95f, 0.8f);
 
                 TextMeshProUGUI hint = NewText("Hint", panel,
-                    "左键 1 个 · Shift+左键 10 个 · Ctrl+左键 100 个 · 打字筛选 · Esc 关闭", 18f, TextAlignmentOptions.Right);
+                    "左键 1 个 · Shift+左键 10 个 · Ctrl+左键 100 个 · 打字筛选（中文 / 拼音 / ID）· Esc 关闭", 18f, TextAlignmentOptions.Right);
                 RectTransform hintRect = (RectTransform)hint.transform;
                 hintRect.anchorMin = new Vector2(1f, 1f);
                 hintRect.anchorMax = new Vector2(1f, 1f);
@@ -579,12 +1006,27 @@ namespace ItemPicker
                 catLayout.childForceExpandWidth = false;
                 catLayout.childForceExpandHeight = false;
 
+                modBar = NewRect("ModSources", panel);
+                modBar.anchorMin = new Vector2(0f, 1f);
+                modBar.anchorMax = new Vector2(1f, 1f);
+                modBar.pivot = new Vector2(0.5f, 1f);
+                modBar.anchoredPosition = new Vector2(0f, -148f);
+                modBar.sizeDelta = new Vector2(-48f, 40f);
+                HorizontalLayoutGroup modLayout = modBar.gameObject.AddComponent<HorizontalLayoutGroup>();
+                modLayout.spacing = 8f;
+                modLayout.childAlignment = TextAnchor.MiddleLeft;
+                modLayout.childControlWidth = true;
+                modLayout.childControlHeight = true;
+                modLayout.childForceExpandWidth = false;
+                modLayout.childForceExpandHeight = false;
+
                 RectTransform scrollRectT = NewRect("Scroll", panel);
                 scrollRectT.anchorMin = new Vector2(0f, 0f);
                 scrollRectT.anchorMax = new Vector2(1f, 1f);
                 scrollRectT.pivot = new Vector2(0.5f, 0.5f);
                 scrollRectT.offsetMin = new Vector2(24f, 24f);
                 scrollRectT.offsetMax = new Vector2(-24f, -156f);
+                scrollArea = scrollRectT;
                 Image scrollBg = scrollRectT.gameObject.AddComponent<Image>();
                 scrollBg.color = new Color(0f, 0f, 0f, 0.35f);
                 scrollRectT.gameObject.AddComponent<RectMask2D>();
@@ -657,15 +1099,26 @@ namespace ItemPicker
                 tooltipIcon.raycastTarget = false;
                 tooltipRect.gameObject.SetActive(false);
 
-                if (categories.Count > 0)
+                if (categories.Count > 0 || modItemCount > 0)
                 {
                     BuildCategoryButtons();
                 }
                 else
                 {
                     categoryBar.gameObject.SetActive(false);
-                    scrollRectT.offsetMax = new Vector2(-24f, -108f);
                 }
+
+                if (modItemCount > 0)
+                {
+                    BuildModButtons();
+                }
+                else
+                {
+                    modBar.gameObject.SetActive(false);
+                }
+
+                ApplyFilterLayout();
+
                 RefreshFilterLabel();
                 ItemPickerPlugin.Log.LogInfo("物品生成器界面已创建。");
             }
@@ -679,6 +1132,10 @@ namespace ItemPicker
         private static void BuildCategoryButtons()
         {
             AddCategoryButton("", "全部");
+            if (modItemCount > 0)
+            {
+                AddCategoryButton("__mod__", "mod物品");
+            }
             for (int i = 0; i < categories.Count; i++)
             {
                 string cat = categories[i];
@@ -725,10 +1182,73 @@ namespace ItemPicker
             btn.onClick.AddListener(delegate
             {
                 currentCategory = capturedCat;
+                if (capturedCat != "__mod__")
+                {
+                    currentOwner = "";
+                }
+                ApplyFilterLayout();
                 RebuildGrid();
             });
             TextMeshProUGUI t = NewText("Label", go.transform, label, 18f, TextAlignmentOptions.Center);
             Stretch((RectTransform)t.transform, 0f, 0f, 0f, 0f);
+        }
+
+        private static void BuildModButtons()
+        {
+            AddModButton("", "全部来源");
+            for (int i = 0; i < modOwners.Count; i++)
+            {
+                AddModButton(modOwners[i], CuCoreBridge.OwnerDisplayName(modOwners[i]));
+            }
+        }
+
+        private static void AddModButton(string owner, string label)
+        {
+            string shortLabel = label;
+            if (!string.IsNullOrEmpty(shortLabel) && shortLabel.Length > 14)
+            {
+                shortLabel = shortLabel.Substring(0, 13) + "…";
+            }
+            GameObject go = new GameObject("Mod_" + (owner.Length == 0 ? "all" : owner),
+                typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
+            go.transform.SetParent(modBar, false);
+            Image img = go.GetComponent<Image>();
+            img.color = new Color(0.13f, 0.16f, 0.21f, 1f);
+            LayoutElement le = go.GetComponent<LayoutElement>();
+            le.preferredWidth = Mathf.Max(92f, (string.IsNullOrEmpty(shortLabel) ? 4 : shortLabel.Length) * 15f + 26f);
+            le.preferredHeight = 36f;
+            Button btn = go.GetComponent<Button>();
+            btn.targetGraphic = img;
+            string captured = owner;
+            btn.onClick.AddListener(delegate
+            {
+                currentOwner = captured;
+                RebuildGrid();
+            });
+            TextMeshProUGUI t = NewText("Label", go.transform, shortLabel, 16f, TextAlignmentOptions.Center);
+            Stretch((RectTransform)t.transform, 0f, 0f, 0f, 0f);
+        }
+
+        private static void ApplyFilterLayout()
+        {
+            bool showModBar = modBar != null && modItemCount > 0 && currentCategory == "__mod__";
+            if (modBar != null && modBar.gameObject.activeSelf != showModBar)
+            {
+                modBar.gameObject.SetActive(showModBar);
+            }
+            float topInset = 108f;
+            if (categoryBar != null && categoryBar.gameObject.activeSelf)
+            {
+                topInset += 48f;
+            }
+            if (showModBar)
+            {
+                topInset += 44f;
+            }
+            if (scrollArea != null)
+            {
+                scrollArea.offsetMax = new Vector2(-24f, -topInset);
+            }
         }
 
         private static void RefreshFilterLabel()
@@ -738,14 +1258,28 @@ namespace ItemPicker
                 return;
             }
             filterText.text = string.IsNullOrEmpty(filter)
-                ? "筛选：直接打字即可（Esc 清空 / 关闭）"
+                ? "筛选：中文 / 拼音 / 英文 ID（Esc 清空 / 关闭）"
                 : ("筛选：" + filter);
         }
 
         private static bool Matches(ItemEntry e)
         {
-            if (!string.IsNullOrEmpty(currentCategory) &&
-                !string.Equals(e.Category, currentCategory, StringComparison.OrdinalIgnoreCase))
+            if (!string.IsNullOrEmpty(currentOwner))
+            {
+                if (!e.IsMod || !string.Equals(e.OwnerGuid, currentOwner, StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+            }
+            if (currentCategory == "__mod__")
+            {
+                if (!e.IsMod)
+                {
+                    return false;
+                }
+            }
+            else if (!string.IsNullOrEmpty(currentCategory) &&
+                     !string.Equals(e.Category, currentCategory, StringComparison.OrdinalIgnoreCase))
             {
                 return false;
             }
@@ -758,7 +1292,28 @@ namespace ItemPicker
             {
                 return true;
             }
-            return e.Id != null && e.Id.ToLowerInvariant().Contains(f);
+            if (e.Id != null && e.Id.ToLowerInvariant().Contains(f))
+            {
+                return true;
+            }
+            string letters = "";
+            for (int i = 0; i < f.Length; i++)
+            {
+                char c = f[i];
+                if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
+                {
+                    letters += c;
+                }
+            }
+            if (letters.Length == 0)
+            {
+                return false;
+            }
+            if (e.Pinyin != null && e.Pinyin.IndexOf(letters, StringComparison.Ordinal) >= 0)
+            {
+                return true;
+            }
+            return e.Initials != null && e.Initials.IndexOf(letters, StringComparison.Ordinal) >= 0;
         }
 
         private static void RebuildGrid()
@@ -878,7 +1433,21 @@ namespace ItemPicker
                 for (int i = 0; i < amount; i++)
                 {
                     Vector2 p = basePos + UnityEngine.Random.insideUnitCircle * 0.35f;
-                    GameObject go = Utils.Create(e.Id, p, 0f);
+                    GameObject go;
+                    if (e.IsMod)
+                    {
+                        // mod 物品不在 Resources 里，只能通过 CUCoreLib 实例化
+                        go = CuCoreBridge.Spawn(e.Id, new Vector3(p.x, p.y, 0f));
+                        if (go == null)
+                        {
+                            // 兜底：个别 mod 物品可能同时提供 Resources 预制体
+                            go = Utils.Create(e.Id, p, 0f);
+                        }
+                    }
+                    else
+                    {
+                        go = Utils.Create(e.Id, p, 0f);
+                    }
                     if (go == null)
                     {
                         break;
